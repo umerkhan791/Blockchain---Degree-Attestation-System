@@ -1,0 +1,39 @@
+# Python virtual environments
+venv/
+backend/venv/
+
+# Environment variables
+.env
+backend/.env
+
+# Python cache
+__pycache__/
+backend/__pycache__/
+*.pyc
+
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Logs
+logs/
+*.log
+
+# Uploads and generated files
+uploads/
+degrees/
+qr_codes/
+
+# Keys
+*.key
+
+# Build folders
+dist/
+build/
+
+# VS Code
+.vscode/
+
+simulation_report.json
+backend/data/degrees.json
+data/degrees.json
