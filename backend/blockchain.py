@@ -1,10 +1,18 @@
 from web3 import Web3
 
 # Connect to Ganache
-ganache_url = "http://127.0.0.1:7545"
-web3 = Web3(Web3.HTTPProvider(ganache_url))
+# ganache_url = "http://127.0.0.1:7545"
+# web3 = Web3(Web3.HTTPProvider(ganache_url))
 
-print("Connected:", web3.is_connected())
+# print("Connected:", web3.is_connected())
+
+try:
+    ganache_url = "http://127.0.0.1:7545"
+    web3 = Web3(Web3.HTTPProvider(ganache_url))
+    print("Connected:", web3.is_connected())
+except:
+    web3 = None
+    print("Ganache disabled")
 
 # Contract Address
 contract_address = "0x2f817aa3645E9c09004edF975d9941fc3D94F37A"
