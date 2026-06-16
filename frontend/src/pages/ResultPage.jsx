@@ -62,10 +62,12 @@ export default function ResultPage() {
     )
   }
 
+  // Use Supabase public URLs if available (persist across redeploys)
+  // Fall back to Render /download route if not
   const pdfFilename = result.pdf_path ? result.pdf_path.split(/[\\/]/).pop() : null
   const qrFilename  = result.qr_path  ? result.qr_path.split(/[\\/]/).pop()  : null
-  const pdfUrl      = pdfFilename ? `${API_BASE}/download/${pdfFilename}` : null
-  const qrUrl       = qrFilename  ? `${API_BASE}/qr/${qrFilename}`        : null
+  const pdfUrl      = result.pdf_url  || (pdfFilename ? `${API_BASE}/download/${pdfFilename}` : null)
+  const qrUrl       = result.qr_url   || (qrFilename  ? `${API_BASE}/qr/${qrFilename}`        : null)
 
   const copy = async (value, label) => {
     const ok = await copyToClipboard(value)
