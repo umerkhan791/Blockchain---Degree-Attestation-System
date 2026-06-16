@@ -1,19 +1,14 @@
 import base64
 import json
 import requests
-
-# ─────────────────────────────────────────────────────────────────
-# CONFIGURATION — paste your OpenRouter API key here
-# ─────────────────────────────────────────────────────────────────
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL              = "google/gemini-2.5-flash-lite"
-API_URL            = "https://openrouter.ai/api/v1/chat/completions"
-# ─────────────────────────────────────────────────────────────────
+MODEL   = "google/gemini-2.5-flash-lite"
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
 def encode_image(image_path: str) -> str:
@@ -22,10 +17,6 @@ def encode_image(image_path: str) -> str:
 
 
 def ask_gemini(prompt: str, image_path: str) -> str:
-    """
-    Send image + prompt to Gemini 2.0 Flash Lite via OpenRouter.
-    Text comes BEFORE image_url in content array (fixes 400 error).
-    """
     image_b64 = encode_image(image_path)
     ext       = image_path.lower().split(".")[-1]
     mime_map  = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png"}
@@ -44,16 +35,8 @@ def ask_gemini(prompt: str, image_path: str) -> str:
             {
                 "role": "user",
                 "content": [
-                    {
-                        "type": "text",
-                        "text": prompt
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{mime_type};base64,{image_b64}"
-                        }
-                    }
+                    {"type": "text",      "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{image_b64}"}}
                 ]
             }
         ],
@@ -113,12 +96,20 @@ Use null if not found."""
 
 def extract_from_cnic(cnic_path: str) -> dict:
     prompt = """Look at this Pakistani CNIC (front side).
-Find the field labeled exactly "Date of Expiry" at the bottom right area.
+Find the field labeled "Date of Expiry" at the bottom right area.
 
-Return ONLY valid JSON:
+Pakistani CNICs show dates in DD.MM.YYYY format (e.g. 29.07.2029).
+You must convert it to DD-MM-YYYY format before returning.
+
+Examples:
+- If you see 29.07.2029 → return "29-07-2029"
+- If you see 15.03.2027 → return "15-03-2027"
+- If you see 29-07-2029 → return "29-07-2029" (already correct)
+
+Return ONLY valid JSON, no markdown, no explanation:
 {"cnic_expiry": "DD-MM-YYYY"}
 
-Use null if not found."""
+Use null if the date is not found or not readable."""
 
     print("[Gemini] Sending CNIC...")
     raw = ask_gemini(prompt, cnic_path)
@@ -129,7 +120,6 @@ Use null if not found."""
 def parse_json(raw: str, fallback: dict) -> dict:
     try:
         cleaned = raw.strip()
-        # Strip markdown fences if present
         if "```" in cleaned:
             lines   = cleaned.split("\n")
             lines   = [l for l in lines if not l.strip().startswith("```")]
@@ -141,10 +131,6 @@ def parse_json(raw: str, fallback: dict) -> dict:
 
 
 def extract_all(transcript_path, marksheet_path, cnic_front_path, cnic_back_path) -> dict:
-    transcript_data = extract_from_transcript(transcript_path)
-    marksheet_data  = extract_from_marksheet(marksheet_path)
-    cnic_data       = extract_from_cnic(cnic_front_path)  # ← front has expiry
-
     transcript_data = extract_from_transcript(transcript_path)
     marksheet_data  = extract_from_marksheet(marksheet_path)
     cnic_data       = extract_from_cnic(cnic_front_path)
@@ -167,6 +153,6 @@ def extract_all(transcript_path, marksheet_path, cnic_front_path, cnic_back_path
     print("\n[GEMINI RESULT]")
     for k, v in result.items():
         print(f"  {k}: {v}")
-    print("="*50 + "\n")
+    print("=" * 50 + "\n")
 
     return result
