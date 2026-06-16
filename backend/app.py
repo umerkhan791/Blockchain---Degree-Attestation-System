@@ -1,29 +1,16 @@
 """
 app.py — ChainDegree Flask backend.
-
-Changes from original:
-  • blockchain.py now auto-selects Ganache (dev) or Sepolia (prod)
-  • degree_store replaced by supabase_store
-  • /verify reads from both blockchain AND Supabase
-  • /admin/stats and /admin/report read from Supabase (no JSON file)
-  • CORS origin locked to FRONTEND_URL env var in production
 """
 
 import os
-import time
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Blockchain (auto-selects Ganache or Sepolia) ──────────────────────────────
-from blockchain import store_degree, revoke_degree, contract, web3, get_etherscan_url
-
-# ── Supabase storage (replaces degree_store / degrees.json) ───────────────────
+from blockchain     import store_degree, revoke_degree, contract, web3, get_etherscan_url
 import supabase_store as db
-
-# ── Other backend modules ─────────────────────────────────────────────────────
 from gemini_ocr     import extract_all
 from validation     import validate_cgpa, validate_percentage, validate_cnic_expiry, is_eligible
 from pdf_generator  import generate_degree
@@ -32,11 +19,10 @@ from qr_generator   import generate_qr
 from audit_logger   import log_event
 from crypto_utils   import encrypt_field
 
-# ── App setup ─────────────────────────────────────────────────────────────────
 app = Flask(__name__)
 
-ENV            = os.getenv("FLASK_ENV", "development")
-FRONTEND_URL   = os.getenv("FRONTEND_URL", "*")          # e.g. https://chaindegree.vercel.app
+ENV          = os.getenv("FLASK_ENV", "development")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "*")
 
 CORS(app, resources={r"/*": {"origins": FRONTEND_URL if ENV == "production" else "*"}})
 
@@ -48,13 +34,8 @@ os.makedirs(UPLOAD_FOLDER,  exist_ok=True)
 os.makedirs(DEGREES_FOLDER, exist_ok=True)
 os.makedirs(QR_FOLDER,      exist_ok=True)
 
-# ── In-memory verification counter (not persisted — low priority stat) ────────
 _verification_count = 0
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Routes
-# ─────────────────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def home():
@@ -68,7 +49,6 @@ def upload_files():
         if f not in request.files:
             return jsonify({"error": f"{f} missing"}), 400
 
-    # ── Save uploaded files ───────────────────────────────────────────────────
     cnic_front_path = os.path.join(UPLOAD_FOLDER, "cnic_front.jpg")
     cnic_back_path  = os.path.join(UPLOAD_FOLDER, "cnic_back.jpg")
     marksheet_path  = os.path.join(UPLOAD_FOLDER, "marksheet.jpg")
@@ -79,24 +59,20 @@ def upload_files():
     request.files["marksheet"].save(marksheet_path)
     request.files["transcript"].save(transcript_path)
 
-    # ── Gemini Vision extraction ──────────────────────────────────────────────
     extracted    = extract_all(transcript_path, marksheet_path, cnic_front_path, cnic_back_path)
     student_name = extracted["student_name"] or "Unknown Student"
     cgpa         = extracted["cgpa"]
     percentage   = extracted["percentage"]
     expiry_date  = extracted["cnic_expiry"]
 
-    # ── Rule-based validation ─────────────────────────────────────────────────
     cgpa_valid       = validate_cgpa(cgpa)
     percentage_valid = validate_percentage(percentage)
     cnic_valid       = validate_cnic_expiry(expiry_date)
     eligible         = is_eligible(cgpa, percentage, cnic_valid)
 
     if not eligible:
-        log_event(
-            "DEGREE_REJECTED",
-            f"student={student_name} cgpa={cgpa} percentage={percentage} cnic_valid={cnic_valid}",
-        )
+        log_event("DEGREE_REJECTED",
+                  f"student={student_name} cgpa={cgpa} percentage={percentage} cnic_valid={cnic_valid}")
         db.add_degree({
             "student_name":          student_name,
             "cgpa":                  cgpa,
@@ -116,28 +92,29 @@ def upload_files():
             "cnic_valid":       cnic_valid,
         })
 
-    # ── Generate degree PDF ───────────────────────────────────────────────────
-    pdf_path    = generate_degree(student_name, cgpa)
-    degree_hash = generate_hash(pdf_path)
-    qr_path     = generate_qr(degree_hash)
-    pdf_path    = generate_degree(student_name, cgpa, qr_path, "degree.pdf")
-    degree_hash = generate_hash(pdf_path)   # re-hash after QR embedded
+    # First pass PDF — no QR yet
+    pdf_path, _       = generate_degree(student_name, cgpa)
+    degree_hash       = generate_hash(pdf_path)
 
-    # ── Duplicate prevention ──────────────────────────────────────────────────
+    # Generate QR pointing to verify URL
+    qr_path, qr_url   = generate_qr(degree_hash)
+
+    # Second pass — embed QR into PDF
+    pdf_path, pdf_url = generate_degree(student_name, cgpa, qr_path, "degree.pdf")
+    degree_hash       = generate_hash(pdf_path)
+
     if db.degree_exists(degree_hash):
         log_event("DUPLICATE_DEGREE_BLOCKED", f"student={student_name} degree_hash={degree_hash}")
         return jsonify({
-            "status":      "REJECTED",
-            "error":       "Duplicate degree detected. This degree has already been issued.",
+            "status":       "REJECTED",
+            "error":        "Duplicate degree detected. This degree has already been issued.",
             "student_name": student_name,
             "degree_hash":  degree_hash,
         }), 409
 
-    # ── Store on blockchain ───────────────────────────────────────────────────
-    tx_hash     = store_degree(student_name, degree_hash)
-    etherscan   = get_etherscan_url(tx_hash)
+    tx_hash   = store_degree(student_name, degree_hash)
+    etherscan = get_etherscan_url(tx_hash)
 
-    # ── Persist metadata in Supabase ──────────────────────────────────────────
     db.add_degree({
         "student_name":          student_name,
         "cgpa":                  cgpa,
@@ -146,14 +123,12 @@ def upload_files():
         "cnic_expiry_encrypted": encrypt_field(expiry_date),
         "degree_hash":           degree_hash,
         "tx_hash":               tx_hash,
-        "sepolia_tx":            tx_hash if os.getenv("FLASK_ENV") == "production" else None,
+        "sepolia_tx":            tx_hash if ENV == "production" else None,
         "status":                "APPROVED",
     })
 
-    log_event(
-        "DEGREE_ISSUED",
-        f"student={student_name} hash={degree_hash} tx={tx_hash}",
-    )
+    log_event("DEGREE_ISSUED",
+              f"student={student_name} hash={degree_hash} tx={tx_hash} etherscan={etherscan}")
 
     pdf_filename = os.path.basename(pdf_path)
     qr_filename  = os.path.basename(qr_path)
@@ -166,6 +141,8 @@ def upload_files():
         "cnic_expiry":   expiry_date,
         "pdf_path":      pdf_filename,
         "qr_path":       qr_filename,
+        "pdf_url":       pdf_url,
+        "qr_url":        qr_url,
         "degree_hash":   degree_hash,
         "blockchain_tx": tx_hash,
         "etherscan_url": etherscan,
@@ -177,7 +154,6 @@ def verify_degree(degree_hash):
     global _verification_count
     try:
         result = contract.functions.degrees(degree_hash).call()
-
         if not result or result[0] == "":
             log_event("FRAUD_ATTEMPT", f"degree_hash={degree_hash}")
             return jsonify({"status": "INVALID DEGREE"}), 404
@@ -185,18 +161,9 @@ def verify_degree(degree_hash):
         _verification_count += 1
         log_event("DEGREE_VERIFIED", f"student={result[0]} degree_hash={result[1]}")
 
-        if result[3]:   # revoked flag
-            return jsonify({
-                "status":       "REVOKED",
-                "student_name": result[0],
-                "timestamp":    result[2],
-            })
-
-        return jsonify({
-            "status":       "VALID",
-            "student_name": result[0],
-            "timestamp":    result[2],
-        })
+        if result[3]:
+            return jsonify({"status": "REVOKED", "student_name": result[0], "timestamp": result[2]})
+        return jsonify({"status": "VALID", "student_name": result[0], "timestamp": result[2]})
     except Exception as e:
         log_event("FRAUD_ATTEMPT", f"degree_hash={degree_hash} error={e}")
         return jsonify({"status": "INVALID DEGREE", "error": str(e)}), 404
@@ -205,18 +172,15 @@ def verify_degree(degree_hash):
 @app.route("/admin/stats", methods=["GET"])
 def admin_stats():
     try:
-        stats   = db.get_stats()
-        recent  = db.get_recent_degrees(10)
-        safe    = [
-            {
-                "student_name": r.get("student_name"),
-                "degree_hash":  r.get("degree_hash"),
-                "timestamp":    r.get("created_at"),
-                "status":       r.get("status"),
-                "revoked":      r.get("status") == "REVOKED",
-            }
-            for r in recent
-        ]
+        stats  = db.get_stats()
+        recent = db.get_recent_degrees(10)
+        safe   = [{
+            "student_name": r.get("student_name"),
+            "degree_hash":  r.get("degree_hash"),
+            "timestamp":    r.get("created_at"),
+            "status":       r.get("status"),
+            "revoked":      r.get("status") == "REVOKED",
+        } for r in recent]
         return jsonify({
             "total":                stats["total"],
             "approved":             stats["approved"],
@@ -233,7 +197,6 @@ def admin_stats():
 @app.route("/admin/report", methods=["GET"])
 def admin_report():
     try:
-        # ── Audit log ─────────────────────────────────────────────────────────
         log_path = os.path.join(os.path.dirname(__file__), "logs", "audit.log")
         events, counts = [], {
             "DEGREE_ISSUED": 0, "DEGREE_REJECTED": 0, "DEGREE_VERIFIED": 0,
@@ -250,18 +213,14 @@ def admin_report():
                         if ev in counts:
                             counts[ev] += 1
 
-        # ── Degrees from Supabase ─────────────────────────────────────────────
         all_degrees = db.get_all_degrees()
-        safe = [
-            {
-                "student_name":  d.get("student_name"),
-                "degree_hash":   d.get("degree_hash"),
-                "timestamp":     d.get("created_at"),
-                "status":        d.get("status"),
-                "blockchain_tx": d.get("tx_hash"),
-            }
-            for d in all_degrees
-        ]
+        safe = [{
+            "student_name":  d.get("student_name"),
+            "degree_hash":   d.get("degree_hash"),
+            "timestamp":     d.get("created_at"),
+            "status":        d.get("status"),
+            "blockchain_tx": d.get("tx_hash"),
+        } for d in all_degrees]
 
         return jsonify({
             "counts":               counts,
