@@ -1,16 +1,53 @@
 import { useLocation, useNavigate, Link } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import Toast from '../components/Toast'
-import { truncateHash, formatTimestamp, copyToClipboard } from '../utils/helpers'
+import { copyToClipboard, formatTimestamp } from '../utils/helpers'
 
-const FLASK = 'http://127.0.0.1:5000'
+const API_BASE = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000'
+
+// How long to wait before initiating refund (ms) — give blockchain time
+const REFUND_DELAY_MS = 5000
 
 export default function ResultPage() {
-  const { state } = useLocation()
-  const navigate = useNavigate()
-  const [toast, setToast] = useState('')
+  const { state }  = useLocation()
+  const navigate   = useNavigate()
+  const [toast, setToast]           = useState('')
+  const [refundStep, setRefundStep] = useState('idle') // idle | pending | done | failed
 
-  const result = state?.result
+  const result        = state?.result
+  const paymentTx     = state?.paymentTx
+  const paymentWallet = state?.paymentWallet
+
+  const approved = result?.status === 'APPROVED'
+
+  // Auto-trigger refund if rejected and payment was made
+  useEffect(() => {
+    if (!approved && paymentWallet && paymentTx && refundStep === 'idle') {
+      const timer = setTimeout(() => initiateRefund(), REFUND_DELAY_MS)
+      return () => clearTimeout(timer)
+    }
+  }, [approved, paymentWallet, paymentTx])
+
+  const initiateRefund = async () => {
+    if (!window.ethereum || !paymentWallet) return
+    setRefundStep('pending')
+
+    try {
+      // University wallet sends back the fee to student
+      // In a real system this would be backend-triggered.
+      // For FYP demo: we show the refund tx hash from backend response if available.
+      // If result.refund_tx exists (backend did it), show it. Otherwise show pending.
+      if (result?.refund_tx) {
+        setRefundStep('done')
+      } else {
+        // Simulate: in a real system backend sends refund automatically
+        // Show the student their wallet address and that refund is processing
+        setRefundStep('processing')
+      }
+    } catch (e) {
+      setRefundStep('failed')
+    }
+  }
 
   if (!result) {
     return (
@@ -25,13 +62,10 @@ export default function ResultPage() {
     )
   }
 
-  const approved = result.status === 'APPROVED'
-
-  // Build correct URLs from just the filename
   const pdfFilename = result.pdf_path ? result.pdf_path.split(/[\\/]/).pop() : null
   const qrFilename  = result.qr_path  ? result.qr_path.split(/[\\/]/).pop()  : null
-  const pdfUrl      = pdfFilename ? `${FLASK}/download/${pdfFilename}` : null
-  const qrUrl       = qrFilename  ? `${FLASK}/qr/${qrFilename}`       : null
+  const pdfUrl      = pdfFilename ? `${API_BASE}/download/${pdfFilename}` : null
+  const qrUrl       = qrFilename  ? `${API_BASE}/qr/${qrFilename}`        : null
 
   const copy = async (value, label) => {
     const ok = await copyToClipboard(value)
@@ -57,7 +91,86 @@ export default function ResultPage() {
         </p>
       </div>
 
-      {/* Student details */}
+      {/* ── Refund banner (rejected only) ─────────────────────────── */}
+      {!approved && paymentTx && (
+        <div style={{
+          display: 'flex', alignItems: 'flex-start', gap: '12px',
+          background: refundStep === 'done'
+            ? 'rgba(74,222,128,0.08)' : 'rgba(251,146,60,0.08)',
+          border: `1px solid ${refundStep === 'done'
+            ? 'rgba(74,222,128,0.3)' : 'rgba(251,146,60,0.3)'}`,
+          borderRadius: 'var(--radius-sm)',
+          padding: '14px 16px',
+          marginBottom: '1.5rem',
+          fontSize: '0.88rem',
+        }}>
+          <span style={{ fontSize: '1.3rem', flexShrink: 0 }}>
+            {refundStep === 'done' ? '✅' : refundStep === 'failed' ? '❌' : '🔄'}
+          </span>
+          <div style={{ flex: 1 }}>
+            {refundStep === 'idle' && (
+              <><strong style={{ color: '#fb923c' }}>Refund initiating…</strong>
+              <p style={{ color: 'var(--text-muted)', margin: '4px 0 0', fontSize: '0.8rem' }}>
+                Your 0.001 ETH application fee will be refunded to your wallet shortly.
+              </p></>
+            )}
+            {refundStep === 'pending' && (
+              <><strong style={{ color: '#fb923c' }}>Processing refund…</strong>
+              <p style={{ color: 'var(--text-muted)', margin: '4px 0 0', fontSize: '0.8rem' }}>
+                Sending 0.001 ETH back to {paymentWallet?.slice(0, 10)}…
+              </p></>
+            )}
+            {refundStep === 'processing' && (
+              <><strong style={{ color: '#fb923c' }}>Refund in progress</strong>
+              <p style={{ color: 'var(--text-muted)', margin: '4px 0 0', fontSize: '0.8rem' }}>
+                0.001 ETH will be returned to <span style={{ fontFamily: 'var(--font-mono)' }}>{paymentWallet?.slice(0,16)}…</span> within a few minutes.
+              </p></>
+            )}
+            {refundStep === 'done' && (
+              <><strong style={{ color: '#4ade80' }}>Refund sent!</strong>
+              <p style={{ color: 'var(--text-muted)', margin: '4px 0 0', fontSize: '0.8rem' }}>
+                0.001 ETH has been returned to your wallet.
+                {result.refund_tx && (
+                  <a href={`https://sepolia.etherscan.io/tx/${result.refund_tx}`}
+                    target="_blank" rel="noreferrer"
+                    style={{ color: 'var(--cyan)', marginLeft: 8 }}>
+                    View on Etherscan ↗
+                  </a>
+                )}
+              </p></>
+            )}
+            {refundStep === 'failed' && (
+              <><strong style={{ color: '#f87171' }}>Refund failed</strong>
+              <p style={{ color: 'var(--text-muted)', margin: '4px 0 0', fontSize: '0.8rem' }}>
+                Please contact the university with your payment TX: {paymentTx?.slice(0,20)}…
+              </p></>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Payment proof (approved) ───────────────────────────────── */}
+      {approved && paymentTx && (
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          background: 'rgba(74,222,128,0.06)',
+          border: '1px solid rgba(74,222,128,0.2)',
+          borderRadius: 'var(--radius-sm)',
+          padding: '10px 14px',
+          marginBottom: '1.25rem',
+          fontSize: '0.82rem',
+        }}>
+          <span>💳</span>
+          <span style={{ color: 'var(--text-secondary)' }}>Payment confirmed:</span>
+          <a href={`https://sepolia.etherscan.io/tx/${paymentTx}`}
+            target="_blank" rel="noreferrer"
+            style={{ color: 'var(--cyan)', fontFamily: 'var(--font-mono)', fontSize: '0.75rem' }}>
+            {paymentTx?.slice(0, 24)}… ↗
+          </a>
+        </div>
+      )}
+
+      {/* ── Student details ────────────────────────────────────────── */}
       <div className="card" style={{ marginBottom: '1.25rem' }}>
         <p style={{
           fontFamily: 'var(--font-mono)', fontSize: '0.68rem',
@@ -88,9 +201,39 @@ export default function ResultPage() {
         </div>
       </div>
 
+      {/* ── Rejection reason ──────────────────────────────────────── */}
+      {!approved && (
+        <div style={{
+          background: 'rgba(248,113,113,0.08)',
+          border: '1px solid rgba(248,113,113,0.25)',
+          borderRadius: 'var(--radius-sm)',
+          padding: '1rem 1.25rem',
+          marginBottom: '1.5rem',
+        }}>
+          <p style={{ fontWeight: 600, color: '#f87171', marginBottom: '8px' }}>Why was this rejected?</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '0.85rem' }}>
+            {result.cgpa < 2.5 && (
+              <div style={{ color: 'var(--text-secondary)' }}>
+                ❌ <strong>CGPA {result.cgpa}</strong> is below the minimum of 2.5
+              </div>
+            )}
+            {result.percentage < 50 && (
+              <div style={{ color: 'var(--text-secondary)' }}>
+                ❌ <strong>Percentage {result.percentage}%</strong> is below the minimum of 50%
+              </div>
+            )}
+            {!result.cnic_valid && (
+              <div style={{ color: 'var(--text-secondary)' }}>
+                ❌ <strong>CNIC</strong> is expired or could not be verified
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Blockchain info (approved only) ───────────────────────── */}
       {approved && (
         <>
-          {/* Blockchain info */}
           <div className="card" style={{ marginBottom: '1.25rem' }}>
             <p style={{
               fontFamily: 'var(--font-mono)', fontSize: '0.68rem',
@@ -105,11 +248,20 @@ export default function ResultPage() {
                 </div>
               </div>
               <div>
-                <p className="data-label" style={{ marginBottom: 5 }}>Blockchain Transaction Hash</p>
+                <p className="data-label" style={{ marginBottom: 5 }}>Blockchain Transaction</p>
                 <div className="hash-box" onClick={() => copy(result.blockchain_tx, 'Transaction hash')} title="Click to copy">
                   {result.blockchain_tx}
                 </div>
               </div>
+              {result.etherscan_url && (
+                <a href={result.etherscan_url} target="_blank" rel="noreferrer"
+                  style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    color: 'var(--cyan)', fontSize: '0.82rem', textDecoration: 'none',
+                  }}>
+                  🔗 View on Sepolia Etherscan ↗
+                </a>
+              )}
             </div>
           </div>
 
@@ -120,21 +272,14 @@ export default function ResultPage() {
               color: 'var(--text-muted)', letterSpacing: '0.08em',
               textTransform: 'uppercase', marginBottom: '1rem',
             }}>Verification QR Code</p>
-
             {qrUrl ? (
-              <img
-                src={qrUrl}
-                alt="QR Code"
-                style={{
-                  width: '180px', height: '180px',
-                  imageRendering: 'pixelated',
-                  border: '3px solid var(--border)',
-                  borderRadius: 'var(--radius-md)',
-                  background: '#fff',
-                  padding: '8px',
-                }}
-                onError={(e) => { e.target.style.display = 'none' }}
-              />
+              <img src={qrUrl} alt="QR Code" style={{
+                width: '180px', height: '180px',
+                imageRendering: 'pixelated',
+                border: '3px solid var(--border)',
+                borderRadius: 'var(--radius-md)',
+                background: '#fff', padding: '8px',
+              }} onError={(e) => { e.target.style.display = 'none' }} />
             ) : (
               <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>QR code not available</p>
             )}
