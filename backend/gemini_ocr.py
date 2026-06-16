@@ -32,7 +32,7 @@ def ask_gemini(prompt: str, image_path: str) -> str:
     mime_type = mime_map.get(ext, "image/jpeg")
 
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {API_KEY}",
         "Content-Type":  "application/json",
         "HTTP-Referer":  "http://localhost:5000",
         "X-Title":       "DegreeChain",
