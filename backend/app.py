@@ -227,22 +227,19 @@ def admin_stats():
 @app.route("/admin/report", methods=["GET"])
 def admin_report():
     try:
-        log_path = os.path.join(os.path.dirname(__file__), "logs", "audit.log")
-        events, counts = [], {
-            "DEGREE_ISSUED": 0, "DEGREE_REJECTED": 0, "DEGREE_VERIFIED": 0,
-            "FRAUD_ATTEMPT": 0, "DUPLICATE_DEGREE_BLOCKED": 0,
-            "DEGREE_REVOKED": 0, "UNAUTHORIZED_ACCESS": 0,
-        }
-        if os.path.exists(log_path):
-            with open(log_path) as f:
-                for line in f:
-                    parts = line.strip().split(" | ", 2)
-                    if len(parts) == 3:
-                        ts, ev, details = parts
-                        events.append({"timestamp": ts, "event_type": ev, "details": details})
-                        if ev in counts:
-                            counts[ev] += 1
+        # ── Audit events from Supabase (persistent across redeploys) ──────────
+        from audit_logger import get_audit_events, get_audit_counts
 
+        events_raw = get_audit_events(limit=500)
+        events = [{
+            "timestamp":  e.get("created_at", "").replace("T", " ")[:19],
+            "event_type": e.get("event_type"),
+            "details":    e.get("details"),
+        } for e in events_raw]
+
+        counts = get_audit_counts()
+
+        # ── Degrees from Supabase ─────────────────────────────────────────────
         all_degrees = db.get_all_degrees()
         safe = [{
             "student_name":  d.get("student_name"),
@@ -252,12 +249,18 @@ def admin_report():
             "blockchain_tx": d.get("tx_hash"),
         } for d in all_degrees]
 
+        # ── Blockchain status (more reliable check) ───────────────────────────
+        try:
+            blockchain_connected = web3.is_connected()
+        except Exception:
+            blockchain_connected = False
+
         return jsonify({
             "counts":               counts,
-            "audit_log":            list(reversed(events)),
+            "audit_log":            events,
             "degrees":              safe,
             "total_events":         len(events),
-            "blockchain_connected": web3.is_connected(),
+            "blockchain_connected": blockchain_connected,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
