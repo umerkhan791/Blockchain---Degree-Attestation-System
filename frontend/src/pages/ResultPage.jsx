@@ -229,6 +229,30 @@ export default function ResultPage() {
                 ❌ <strong>CNIC</strong> is expired or could not be verified
               </div>
             )}
+            {result.names_valid === false && (
+              <>
+                <div style={{ color: 'var(--text-secondary)', marginTop: 6 }}>
+                  ❌ <strong>Documents do not belong to the same person</strong>
+                </div>
+                {result.name_mismatches && result.name_mismatches.map((m, i) => (
+                  <div key={i} style={{ color: 'var(--text-muted)', fontSize: '0.78rem', marginLeft: '1.2rem' }}>
+                    • {m}
+                  </div>
+                ))}
+                <div style={{
+                  marginTop: 8, padding: '8px 10px',
+                  background: 'rgba(248,113,113,0.06)',
+                  borderRadius: 4,
+                  fontSize: '0.78rem',
+                  color: 'var(--text-muted)',
+                }}>
+                  <strong>Detected names:</strong><br/>
+                  Transcript: <code>{result.student_name || '—'}</code><br/>
+                  CNIC: <code>{result.cnic_name || '—'}</code><br/>
+                  Marksheet: <code>{result.marksheet_name || '—'}</code>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
