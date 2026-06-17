@@ -153,12 +153,12 @@ def upload_files():
 def verify_degree(degree_hash):
     global _verification_count
     try:
-        # Use verifyDegree function which is the correct one in the Sepolia contract
+        # Sepolia verifyDegree returns (studentName, timestamp)
+        # Ganache verifyDegree returns (studentName, timestamp, revoked)
         result = contract.functions.verifyDegree(degree_hash).call()
 
-        # Sepolia contract returns (studentName, timestamp, revoked)
         student_name = result[0]
-        timestamp    = result[1]
+        timestamp    = result[1] if len(result) > 1 else 0
         revoked      = result[2] if len(result) > 2 else False
 
         if not student_name or student_name == "":
@@ -167,6 +167,17 @@ def verify_degree(degree_hash):
 
         _verification_count += 1
         log_event("DEGREE_VERIFIED", f"student={student_name} degree_hash={degree_hash}")
+
+        # Check Supabase to see if it's been marked revoked (since Sepolia contract
+        # doesn't support revoke). This way the verify is consistent.
+        try:
+            all_degrees = db.get_all_degrees()
+            for d in all_degrees:
+                if d.get("degree_hash") == degree_hash and d.get("status") == "REVOKED":
+                    revoked = True
+                    break
+        except Exception:
+            pass
 
         if revoked:
             return jsonify({

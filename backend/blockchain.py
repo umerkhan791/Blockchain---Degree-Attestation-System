@@ -1,8 +1,8 @@
 """
 blockchain.py — Environment-aware blockchain connector.
 
-Local  (ENV=development) → Ganache  http://127.0.0.1:7545
-Cloud  (ENV=production)  → Sepolia  via SEPOLIA_RPC_URL
+Local  (ENV=development) → Ganache  http://127.0.0.1:7545  (full contract)
+Cloud  (ENV=production)  → Sepolia  via SEPOLIA_RPC_URL    (simple contract)
 """
 
 import os
@@ -11,10 +11,10 @@ from web3 import Web3
 
 load_dotenv()
 
-ENV = os.getenv("FLASK_ENV", "development")   # set to "production" on Render
+ENV = os.getenv("FLASK_ENV", "development")
 
-# ── Contract ABI (same for both chains) ──────────────────────────────────────
-CONTRACT_ABI = [
+# ── Full ABI for the Ganache contract (with revoke, isRevoked, etc) ──────────
+GANACHE_ABI = [
     {
         "inputs": [{"internalType": "string", "name": "_degreeHash", "type": "string"}],
         "name": "revokeDegree",
@@ -73,11 +73,48 @@ CONTRACT_ABI = [
     },
 ]
 
+# ── Simple ABI for the Sepolia deployed contract ──────────────────────────────
+# Matches the contract source on Etherscan:
+#   verifyDegree returns ONLY (string studentName, uint256 timestamp)
+#   degrees mapping returns (string, string, uint256)
+SEPOLIA_ABI = [
+    {
+        "inputs": [
+            {"internalType": "string", "name": "_studentName", "type": "string"},
+            {"internalType": "string", "name": "_degreeHash",  "type": "string"},
+        ],
+        "name": "storeDegree",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [{"internalType": "string", "name": "_degreeHash", "type": "string"}],
+        "name": "verifyDegree",
+        "outputs": [
+            {"internalType": "string",  "name": "", "type": "string"},
+            {"internalType": "uint256", "name": "", "type": "uint256"},
+        ],
+        "stateMutability": "view",
+        "type": "function",
+    },
+    {
+        "inputs": [{"internalType": "string", "name": "", "type": "string"}],
+        "name": "degrees",
+        "outputs": [
+            {"internalType": "string",  "name": "studentName", "type": "string"},
+            {"internalType": "string",  "name": "degreeHash",  "type": "string"},
+            {"internalType": "uint256", "name": "timestamp",   "type": "uint256"},
+        ],
+        "stateMutability": "view",
+        "type": "function",
+    },
+]
+
 
 # ── Connect based on environment ──────────────────────────────────────────────
 
 if ENV == "production":
-    # ── Sepolia (Render cloud) ────────────────────────────────────────────────
     SEPOLIA_RPC_URL          = os.getenv("SEPOLIA_RPC_URL")
     SEPOLIA_WALLET_ADDRESS   = os.getenv("SEPOLIA_WALLET_ADDRESS")
     SEPOLIA_PRIVATE_KEY      = os.getenv("SEPOLIA_PRIVATE_KEY")
@@ -88,7 +125,7 @@ if ENV == "production":
 
     contract = web3.eth.contract(
         address=Web3.to_checksum_address(SEPOLIA_CONTRACT_ADDRESS),
-        abi=CONTRACT_ABI,
+        abi=SEPOLIA_ABI,
     )
 
     def store_degree(student_name: str, degree_hash: str) -> str:
@@ -105,20 +142,11 @@ if ENV == "production":
         return receipt.transactionHash.hex()
 
     def revoke_degree(degree_hash: str) -> str:
-        nonce = web3.eth.get_transaction_count(SEPOLIA_WALLET_ADDRESS)
-        txn = contract.functions.revokeDegree(degree_hash).build_transaction({
-            "from":     SEPOLIA_WALLET_ADDRESS,
-            "nonce":    nonce,
-            "gas":      100_000,
-            "gasPrice": web3.eth.gas_price,
-        })
-        signed = web3.eth.account.sign_transaction(txn, private_key=SEPOLIA_PRIVATE_KEY)
-        tx_hash = web3.eth.send_raw_transaction(signed.raw_transaction)
-        receipt = web3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-        return receipt.transactionHash.hex()
+        # Sepolia contract has no revoke function — just mark in Supabase
+        print(f"[Sepolia] revokeDegree not supported on this contract — handled in DB only")
+        return "0x" + "0" * 64
 
 else:
-    # ── Ganache (local development) ───────────────────────────────────────────
     GANACHE_URL      = os.getenv("GANACHE_URL", "http://127.0.0.1:7545")
     CONTRACT_ADDRESS = os.getenv("GANACHE_CONTRACT_ADDRESS", "0x2f817aa3645E9c09004edF975d9941fc3D94F37A")
 
@@ -127,7 +155,7 @@ else:
 
     contract = web3.eth.contract(
         address=CONTRACT_ADDRESS,
-        abi=CONTRACT_ABI,
+        abi=GANACHE_ABI,
     )
 
     account = web3.eth.accounts[0]
@@ -143,9 +171,7 @@ else:
         return receipt.transactionHash.hex()
 
 
-# ── Shared helper ─────────────────────────────────────────────────────────────
-
 def get_etherscan_url(tx_hash: str) -> str | None:
     if ENV == "production":
         return f"https://sepolia.etherscan.io/tx/{tx_hash}"
-    return None   # Ganache has no block explorer
+    return None
