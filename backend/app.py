@@ -206,6 +206,7 @@ def admin_stats():
         safe   = [{
             "student_name": r.get("student_name"),
             "degree_hash":  r.get("degree_hash"),
+            "tx_hash":      r.get("tx_hash"),
             "timestamp":    r.get("created_at"),
             "status":       r.get("status"),
             "revoked":      r.get("status") == "REVOKED",
