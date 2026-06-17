@@ -232,12 +232,20 @@ export default function AdminDashboard() {
                     </td>
                     <td style={{ padding: '12px 16px' }}>
                       {deg.degree_hash ? (
-                        <span style={{
-                          fontFamily: 'var(--font-mono)', fontSize: '0.75rem',
-                          color: 'var(--cyan)', background: 'var(--cyan-dim)',
-                          padding: '2px 8px', borderRadius: '4px',
-                        }}>
-                          {deg.degree_hash.slice(0, 14)}…
+                        <span
+                          onClick={() => {
+                            navigator.clipboard.writeText(deg.degree_hash)
+                            alert('Hash copied to clipboard!')
+                          }}
+                          title={`Click to copy full hash: ${deg.degree_hash}`}
+                          style={{
+                            fontFamily: 'var(--font-mono)', fontSize: '0.75rem',
+                            color: 'var(--cyan)', background: 'var(--cyan-dim)',
+                            padding: '2px 8px', borderRadius: '4px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {deg.degree_hash.slice(0, 14)}… 📋
                         </span>
                       ) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                     </td>
@@ -250,9 +258,9 @@ export default function AdminDashboard() {
                       <StatusBadge status={deg.status} revoked={deg.revoked} />
                     </td>
                     <td style={{ padding: '12px 16px' }}>
-                      {deg.degree_hash ? (
+                      {deg.tx_hash ? (
                         <a
-                          href={`https://sepolia.etherscan.io/address/${import.meta.env.VITE_CONTRACT_ADDRESS || ''}`}
+                          href={`https://sepolia.etherscan.io/tx/0x${deg.tx_hash.replace(/^0x/, '')}`}
                           target="_blank" rel="noreferrer"
                           style={{ color: 'var(--cyan)', fontSize: '0.75rem', textDecoration: 'none' }}
                         >
