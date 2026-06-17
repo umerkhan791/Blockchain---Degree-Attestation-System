@@ -266,7 +266,14 @@ def admin_report():
 @app.route("/admin/revoke/<degree_hash>", methods=["POST"])
 def admin_revoke(degree_hash):
     try:
-        tx_hash = revoke_degree(degree_hash)
+        # Try blockchain revoke (works on Ganache, no-op on Sepolia)
+        tx_hash = None
+        try:
+            tx_hash = revoke_degree(degree_hash)
+        except Exception as bc_err:
+            print(f"[Revoke] Blockchain revoke not supported: {bc_err}")
+
+        # Always mark revoked in Supabase
         db.mark_revoked(degree_hash)
         log_event("DEGREE_REVOKED", f"degree_hash={degree_hash} tx={tx_hash}")
         return jsonify({"status": "REVOKED", "tx": tx_hash})
