@@ -153,17 +153,35 @@ def upload_files():
 def verify_degree(degree_hash):
     global _verification_count
     try:
-        result = contract.functions.degrees(degree_hash).call()
-        if not result or result[0] == "":
+        # Use verifyDegree function which is the correct one in the Sepolia contract
+        result = contract.functions.verifyDegree(degree_hash).call()
+
+        # Sepolia contract returns (studentName, timestamp, revoked)
+        student_name = result[0]
+        timestamp    = result[1]
+        revoked      = result[2] if len(result) > 2 else False
+
+        if not student_name or student_name == "":
             log_event("FRAUD_ATTEMPT", f"degree_hash={degree_hash}")
             return jsonify({"status": "INVALID DEGREE"}), 404
 
         _verification_count += 1
-        log_event("DEGREE_VERIFIED", f"student={result[0]} degree_hash={result[1]}")
+        log_event("DEGREE_VERIFIED", f"student={student_name} degree_hash={degree_hash}")
 
-        if result[3]:
-            return jsonify({"status": "REVOKED", "student_name": result[0], "timestamp": result[2]})
-        return jsonify({"status": "VALID", "student_name": result[0], "timestamp": result[2]})
+        if revoked:
+            return jsonify({
+                "status":       "REVOKED",
+                "student_name": student_name,
+                "timestamp":    timestamp,
+                "degree_hash":  degree_hash,
+            })
+
+        return jsonify({
+            "status":       "VALID",
+            "student_name": student_name,
+            "timestamp":    timestamp,
+            "degree_hash":  degree_hash,
+        })
     except Exception as e:
         log_event("FRAUD_ATTEMPT", f"degree_hash={degree_hash} error={e}")
         return jsonify({"status": "INVALID DEGREE", "error": str(e)}), 404
