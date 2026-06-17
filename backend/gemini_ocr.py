@@ -58,7 +58,7 @@ def extract_from_transcript(transcript_path: str) -> dict:
     prompt = """You are a document data extractor.
 Look at this university transcript image carefully.
 Extract:
-- Student full name (exactly as written)
+- Student full name (exactly as written, in CAPITAL letters)
 - CGPA or GPA (a decimal number like 3.62)
 
 Return ONLY valid JSON, no markdown, no explanation:
@@ -75,46 +75,50 @@ Use null if not found."""
 def extract_from_marksheet(marksheet_path: str) -> dict:
     prompt = """You are a document data extractor.
 Look at this Pakistani 12th grade / intermediate marksheet image.
+
+Extract these things:
+1. Student's full name (look for "Name" or "Candidate Name" field, in CAPITAL letters)
+2. Total marks obtained
+3. Maximum total marks (e.g. 1100)
+
 Find the TOTAL row showing maximum marks and obtained marks.
 For example: TOTAL | 1100 | 961
 
-Extract:
-- obtained_marks: total marks the student scored
-- total_marks: maximum possible marks
-- percentage: calculate as (obtained/total)*100, round to 2 decimals
-
 Return ONLY valid JSON, no markdown, no explanation:
-{"obtained_marks": 961, "total_marks": 1100, "percentage": 87.36}
+{"student_name": "FULL NAME HERE", "obtained_marks": 961, "total_marks": 1100, "percentage": 87.36}
 
-Use null if not found."""
+Use null if any field is not found."""
 
     print("[Gemini] Sending marksheet...")
     raw = ask_gemini(prompt, marksheet_path)
     print(f"[Gemini] Marksheet response: {raw}")
-    return parse_json(raw, {"obtained_marks": None, "total_marks": None, "percentage": None})
+    return parse_json(raw, {"student_name": None, "obtained_marks": None, "total_marks": None, "percentage": None})
 
 
 def extract_from_cnic(cnic_path: str) -> dict:
     prompt = """Look at this Pakistani CNIC (front side).
-Find the field labeled "Date of Expiry" at the bottom right area.
+
+Extract these two fields:
+1. Holder's full Name (look for "Name" field at the top, in CAPITAL letters)
+2. Date of Expiry (at the bottom right area)
 
 Pakistani CNICs show dates in DD.MM.YYYY format (e.g. 29.07.2029).
 You must convert it to DD-MM-YYYY format before returning.
 
 Examples:
-- If you see 29.07.2029 → return "29-07-2029"
-- If you see 15.03.2027 → return "15-03-2027"
-- If you see 29-07-2029 → return "29-07-2029" (already correct)
+- 29.07.2029 -> "29-07-2029"
+- 15.03.2027 -> "15-03-2027"
+- 29-07-2029 -> "29-07-2029" (already correct)
 
 Return ONLY valid JSON, no markdown, no explanation:
-{"cnic_expiry": "DD-MM-YYYY"}
+{"student_name": "FULL NAME HERE", "cnic_expiry": "DD-MM-YYYY"}
 
-Use null if the date is not found or not readable."""
+Use null for any field that is not readable."""
 
     print("[Gemini] Sending CNIC...")
     raw = ask_gemini(prompt, cnic_path)
     print(f"[Gemini] CNIC response: {raw}")
-    return parse_json(raw, {"cnic_expiry": None})
+    return parse_json(raw, {"student_name": None, "cnic_expiry": None})
 
 
 def parse_json(raw: str, fallback: dict) -> dict:
@@ -144,7 +148,12 @@ def extract_all(transcript_path, marksheet_path, cnic_front_path, cnic_back_path
             percentage = round((int(obtained) / int(total)) * 100, 2)
 
     result = {
-        "student_name": transcript_data.get("student_name"),
+        # Primary name from transcript
+        "student_name":   transcript_data.get("student_name"),
+        # Cross-check names from other documents
+        "cnic_name":      cnic_data.get("student_name"),
+        "marksheet_name": marksheet_data.get("student_name"),
+
         "cgpa":         transcript_data.get("cgpa"),
         "percentage":   percentage,
         "cnic_expiry":  cnic_data.get("cnic_expiry"),

@@ -64,15 +64,24 @@ def upload_files():
     cgpa         = extracted["cgpa"]
     percentage   = extracted["percentage"]
     expiry_date  = extracted["cnic_expiry"]
+    cnic_name    = extracted.get("cnic_name")
+    marksheet_name = extracted.get("marksheet_name")
 
     cgpa_valid       = validate_cgpa(cgpa)
     percentage_valid = validate_percentage(percentage)
     cnic_valid       = validate_cnic_expiry(expiry_date)
-    eligible         = is_eligible(cgpa, percentage, cnic_valid)
+
+    # Cross-check names across all 3 documents
+    from validation import validate_names_match
+    name_check       = validate_names_match(student_name, cnic_name, marksheet_name)
+    names_valid      = name_check["all_match"]
+
+    eligible         = is_eligible(cgpa, percentage, cnic_valid, names_valid)
 
     if not eligible:
+        rejection_reason = "Name mismatch across documents" if not names_valid else "Eligibility criteria not met"
         log_event("DEGREE_REJECTED",
-                  f"student={student_name} cgpa={cgpa} percentage={percentage} cnic_valid={cnic_valid}")
+                  f"student={student_name} cgpa={cgpa} percentage={percentage} cnic_valid={cnic_valid} names_valid={names_valid}")
         db.add_degree({
             "student_name":          student_name,
             "cgpa":                  cgpa,
@@ -90,6 +99,10 @@ def upload_files():
             "cgpa_valid":       cgpa_valid,
             "percentage_valid": percentage_valid,
             "cnic_valid":       cnic_valid,
+            "names_valid":      names_valid,
+            "name_mismatches":  name_check["mismatches"],
+            "cnic_name":        cnic_name,
+            "marksheet_name":   marksheet_name,
         })
 
     # First pass PDF — no QR yet
